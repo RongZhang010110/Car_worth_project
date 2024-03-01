@@ -1,0 +1,161 @@
+---
+title: "PAC Report based on Xgboost model"
+author: "Rong Zhang"
+date: "8/27/2023"
+output: html_document
+---
+
+## Introduction
+
+The aim of PAC is to train a suitable predictive model from the analysis data and eventually apply it to the scoring data to obtain a lower RMSE. 17 independent variables and 1 dependent variable (rating) are included in the analysis data, but due to the redundancy of the content under the two variables performer and song, these two variables were not added to the analysis process in the I did not add these two variables to the analysis process in my model building. The database used for training therefore ended up with 16 independent variables and 1 dependent variable, and the whole analysis will be carried out in R studio. 
+
+## Data Processing
+
+### Data Uploading
+
+```{r data_upload, echo=TRUE, eval=FALSE}
+scoringData = read.csv('scoringData.csv')`
+```
+
+### Data Cleaning
+
+#### Category Feature
+
+Dealing with category features.Handle missing values and convert them to factors.
+
+```{r a, echo=TRUE, eval=FALSE}
+categorical_cols <- c("make_name", "model_name", "trim_name", "body_type","fuel_type","transmission","wheel_system", "engine_type", "exterior_color", "interior_color", "listing_color") 
+for(col in categorical_cols){   
+analysis_data[[col]][is.na(analysis_data[[col]])] <- names(sort(table(analysis_data[[col]]), decreasing = TRUE))[1]   
+analysis_data[[col]] <- as.factor(analysis_data[[col]]) 
+}
+```
+
+#### Numerical Feature
+
+Fulfill the NA with median numbers in each feature.
+
+```{r aa, echo=TRUE, eval=FALSE}
+numerical_cols <- c("fuel_tank_volume_gallons", "highway_fuel_economy", "city_fuel_economy", "power", "torque", 
+                    "wheelbase_inches", "back_legroom_inches", "front_legroom_inches", "length_inches", 
+                    "width_inches", "height_inches", "engine_displacement", "horsepower", "daysonmarket", 
+                    "mileage", "owner_count", "seller_rating")
+for(col in numerical_cols){
+  analysis_data[[col]][is.na(analysis_data[[col]])] <- median(analysis_data[[col]], na.rm = TRUE)
+}
+```
+
+#### Time Feature
+
+Transfer car_age and days_listed features into the numbers of days from now.
+
+```{r aaa, echo=TRUE, eval=FALSE}
+analysis_data$car_age <- as.numeric(difftime(Sys.Date(), as.Date(analysis_data$year, format="%Y"), units = "days"))
+analysis_data$days_listed <- as.numeric(difftime(Sys.Date(), as.Date(analysis_data$listed_date, format="%Y-%m-%d"), units = "days"))
+analysis_data <- analysis_data %>% select(-c("year", "listed_date"))
+```
+
+#### Bool Feature
+
+Fulfill NAs with mean.
+
+```{r aaaa, echo=TRUE, eval=FALSE}
+boolean_cols <- c("fleet", "frame_damaged", "franchise_dealer", "has_accidents", "isCab", "is_cpo", "is_new", "salvage")
+for(col in boolean_cols){
+  analysis_data[[col]][is.na(analysis_data[[col]])] <- names(sort(table(analysis_data[[col]]), decreasing = TRUE))[1]
+}
+```
+
+After processed analysis dataset, I did same operation to scoring dataset. In short summary, I have total "id","body_type", "fuel_tank_volume_gallons","highway_fuel_economy","city_fuel_economy","wheelbase_inches","back_legroom_inches","front_legroom_inches","length_inches", "width_inches","height_inches","horsepower" , "daysonmarket","maximum_seating","year","fleet","frame_damaged","franchise_dealer", "has_accidents","isCab","is_new","mileage","owner_count","salvage","seller_rating" for the model.
+
+## Model Construction and Data Pridiction
+
+### Random Forest
+
+```{r aaaaa, echo=TRUE, eval=FALSE}
+set.seed(1031)
+train_indices <- sample(1:nrow(analysis_data), nrow(analysis_data)*0.8)
+train_data <- analysis_data[train_indices, ]
+test_data <- analysis_data[-train_indices, ]
+
+rf_model <- randomForest(price ~ ., data = analysis_data, ntree=100)
+rf_predictions <- predict(rf_model, scoringData)
+```
+
+The result for scoring dataset in Kaggle is not very good, so I added mtry to improve my random forest.
+
+```{r aaaaaa, echo=TRUE, eval=FALSE}
+set.seed(1031)
+trControl_forest=trainControl(method = 'cv',number=5)
+tuneGrid_forest=expand.grid(mtry=3:10)
+cvModel_forest=train(reformulate(predictors, response), data=train_data,ntree=400,trControl=trControl_forest,tuneGrid=tuneGrid_forest)
+cvModel_forest
+rf_model <- train(reformulate(predictors, response), data=train_data,method="ranger", trControl=control, tuneGrid=tuneGrid, num.trees=400, splitrule="variance", min.node.size=5, mtry=cvModel_forest$bestTune$mtry)
+tuneGrid_forest 
+```
+
+This method generated better results in Kaggle. So the addition of tree depth and mtry can improve the model.
+
+### Xgboost
+
+To use Xgboost method, we must change our data into Dmatrix format which caused me many trouble to transfer. It's the most time-consuming part when I did my Xgboost model. Then, I apply CV-cross validation to find the best model.
+
+```{r aaa1aaa, echo=TRUE, eval=FALSE}
+features <- new_data_encoded[, -which(names(new_data_encoded) %in% c("id", "price"))]
+features[] <- lapply(features, function(x) if(is.factor(x)) as.numeric(as.factor(x)) else x)
+# Convert data to xgb.DMatrix object
+dtrain <- xgb.DMatrix(data = as.matrix(features), label = labels)
+set.seed(1031)
+# Define CV
+grid <- expand.grid(
+  nrounds = seq(100, 500, by = 50),  
+  max_depth = c(6, 8, 10),
+  eta = c(0.01, 0.05, 0.1),
+  gamma = c(0, 0.1, 0.2),
+  colsample_bytree = c(0.5, 0.7, 0.9),
+  min_child_weight = c(1, 3, 5),
+  subsample = c(0.5, 0.7, 0.9)
+)
+
+train_control <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = TRUE,
+  returnData = FALSE,
+  returnResamp = "none",
+  search = "grid",
+  allowParallel = TRUE
+)
+# Use caret to train
+xgb_train <- train(
+  x = as.matrix(features),
+  y = labels,
+  trControl = train_control,
+  tuneGrid = grid,
+  method = "xgbTree"
+)
+
+print(xgb_train$bestTune)
+# Use best mtry and parameters to retrain the model
+best_params <- xgb_train$bestTune
+
+final_model <- xgb.train(
+  data = xgb_data,
+  params = best_params,
+  nrounds = xgb_train$bestIteration
+)
+dtest <- xgb.DMatrix(data = as.matrix(scoringData1))
+predictions <- predict(final_model, dtest)
+```
+
+The result in Kaggle competition is better than the model random forest. So the final model I selected is Xgboost model.
+
+## Limitations and Opportunities for improvement
+
+The complexity of models like Random Forest and XGBoost, while beneficial for capturing non-linear relationships, can lead to overfitting. Ensuring a balance between model complexity and generalizability is crucial. Then,I would like to try normalization, as normalization can remove the impact of differing units or magnitudes in data, making the data analysis more equitable and consistent. For model Construction part, I think I can add another model like SVM model. Moreover, Combining predictions from multiple models (ensemble methods) can often lead to better performance than any single model. Techniques like stacking or blending could be explored.
+
+## Conclusion
+
+1,743 The core objective of my project was to train a suitable predictive model from the analysis data and apply it to the scoring data to achieve a lower Root Mean Square Error (RMSE). Through meticulous analysis and processing of 16 independent variables and one dependent variable (rating), I successfully built predictive models based on Random Forest and XGBoost, and got a RMSE at 1743.
+
+In this process, I paid special attention to the importance of data preprocessing, including handling categorical features, imputing missing values, and normalizing data, which are crucial for enhancing the accuracy and robustness of the models. Additionally, hyperparameter tuning and model optimization were key to improving predictive performance. Although the XGBoost model outperformed the Random Forest in the Kaggle competition, I recognized that each model has its unique strengths and limitations. Looking forward, I plan to explore more data processing, further refine feature engineering, and consider applying advanced techniques like deep learning to enhance the predictive power of the models. Continuous model monitoring and updating will also be a focus to ensure the models adapt to new data patterns and market changes.
