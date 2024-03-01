@@ -1,0 +1,95 @@
+
+library(tidyverse)
+library(lubridate)
+library(caret)
+library(xgboost)
+library(randomForest)
+library(tidyverse)
+
+analysis_data = read.csv('analysisData.csv', stringsAsFactors = FALSE)
+# 1. 处理分类特征
+categorical_cols <- c("make_name", "model_name", "trim_name", "body_type", "fuel_type", "transmission", 
+                      "wheel_system", "engine_type", "exterior_color", "interior_color", "listing_color")
+for(col in categorical_cols){
+  analysis_data[[col]][is.na(analysis_data[[col]])] <- names(sort(table(analysis_data[[col]]), decreasing = TRUE))[1]
+  analysis_data[[col]] <- as.factor(analysis_data[[col]])
+}
+# 2. 处理数值特征
+numerical_cols <- c("fuel_tank_volume_gallons", "highway_fuel_economy", "city_fuel_economy", "power", "torque", 
+                    "wheelbase_inches", "back_legroom_inches", "front_legroom_inches", "length_inches", 
+                    "width_inches", "height_inches", "engine_displacement", "horsepower", "daysonmarket", 
+                    "mileage", "owner_count", "seller_rating")
+for(col in numerical_cols){
+  analysis_data[[col]][is.na(analysis_data[[col]])] <- median(analysis_data[[col]], na.rm = TRUE)
+}
+# 3. 删除可能的重复或冗余特征
+analysis_data <- analysis_data %>% select(-c("transmission_display", "wheel_system_display", "description", "major_options", "franchise_make"))
+# 4. 转换日期特征
+analysis_data$car_age <- as.numeric(difftime(Sys.Date(), as.Date(analysis_data$year, format="%Y"), units = "days"))
+analysis_data$days_listed <- as.numeric(difftime(Sys.Date(), as.Date(analysis_data$listed_date, format="%Y-%m-%d"), units = "days"))
+analysis_data <- analysis_data %>% select(-c("year", "listed_date"))
+# 5. 处理布尔特征
+boolean_cols <- c("fleet", "frame_damaged", "franchise_dealer", "has_accidents", "isCab", "is_cpo", "is_new", "salvage")
+for(col in boolean_cols){
+  analysis_data[[col]][is.na(analysis_data[[col]])] <- names(sort(table(analysis_data[[col]]), decreasing = TRUE))[1]
+}
+# 删除指定的列
+cols_to_remove <- c("make_name", "model_name", "trim_name", "body_type", "fuel_type", 
+                    "transmission", "wheel_system", "engine_type", "exterior_color", 
+                    "interior_color", "listing_color", "days_listed","power","torque")
+analysis_data <- analysis_data %>% select(-all_of(cols_to_remove))
+
+
+head(analysis_data)
+
+
+
+
+scoringData = read.csv('scoringData.csv', stringsAsFactors = FALSE)
+# 1. 处理分类特征
+categorical_cols <- c("make_name", "model_name", "trim_name", "body_type", "fuel_type", "transmission", 
+                      "wheel_system", "engine_type", "exterior_color", "interior_color", "listing_color")
+for(col in categorical_cols){
+  scoringData[[col]][is.na(scoringData[[col]])] <- names(sort(table(scoringData[[col]]), decreasing = TRUE))[1]
+  scoringData[[col]] <- as.factor(scoringData[[col]])
+}
+# 2. 处理数值特征
+numerical_cols <- c("fuel_tank_volume_gallons", "highway_fuel_economy", "city_fuel_economy", "power", "torque", 
+                    "wheelbase_inches", "back_legroom_inches", "front_legroom_inches", "length_inches", 
+                    "width_inches", "height_inches", "engine_displacement", "horsepower", "daysonmarket", 
+                    "mileage", "owner_count", "seller_rating")
+for(col in numerical_cols){
+  scoringData[[col]][is.na(scoringData[[col]])] <- median(scoringData[[col]], na.rm = TRUE)
+}
+# 3. 删除可能的重复或冗余特征
+scoringData <- scoringData %>% select(-c("transmission_display", "wheel_system_display", "description", "major_options", "franchise_make"))
+# 4. 转换日期特征
+scoringData$car_age <- as.numeric(difftime(Sys.Date(), as.Date(scoringData$year, format="%Y"), units = "days"))
+scoringData$days_listed <- as.numeric(difftime(Sys.Date(), as.Date(scoringData$listed_date, format="%Y-%m-%d"), units = "days"))
+scoringData <- scoringData %>% select(-c("year", "listed_date"))
+# 5. 处理布尔特征
+boolean_cols <- c("fleet", "frame_damaged", "franchise_dealer", "has_accidents", "isCab", "is_cpo", "is_new", "salvage")
+for(col in boolean_cols){
+  scoringData[[col]][is.na(scoringData[[col]])] <- names(sort(table(scoringData[[col]]), decreasing = TRUE))[1]
+}
+# 删除指定的列
+cols_to_remove <- c("make_name", "model_name", "trim_name", "body_type", "fuel_type", 
+                    "transmission", "wheel_system", "engine_type", "exterior_color", 
+                    "interior_color", "listing_color", "days_listed","power","torque")
+scoringData <- scoringData %>% select(-all_of(cols_to_remove))
+
+
+head(scoringData)
+head(analysis_data)
+
+set.seed(42)
+train_indices <- sample(1:nrow(analysis_data), nrow(analysis_data)*0.8)
+train_data <- analysis_data[train_indices, ]
+test_data <- analysis_data[-train_indices, ]
+
+#  随机森林
+rf_model <- randomForest(price ~ ., data = analysis_data, ntree=100)
+rf_predictions <- predict(rf_model, scoringData)
+
+submissionFile_rf = data.frame(id = scoringData$id, price = rf_predictions)
+write.csv(submissionFile_rf, 'sample_submission.csv',row.names = F)
