@@ -1,0 +1,161 @@
+data = read.csv('analysisData.csv', stringsAsFactors = FALSE)
+scoringData = read.csv('scoringData.csv')
+library(tidyverse)
+library(lubridate)
+library(caret)
+library(xgboost)
+library(randomForest)
+library(tidyverse)
+
+data1 = data
+new_data <- data1 |> select("id","body_type",
+                            "fuel_tank_volume_gallons","highway_fuel_economy",
+                            "city_fuel_economy","wheelbase_inches",
+                            "back_legroom_inches","front_legroom_inches","length_inches",
+                            "width_inches","height_inches","horsepower" ,
+                            "daysonmarket","maximum_seating","year","fleet","frame_damaged","franchise_dealer",
+                            "has_accidents","isCab","is_new","mileage","owner_count","salvage","seller_rating","price")
+names(data1)
+unique(new_data$body_type)
+# Assuming your dataframe is named new_data
+# Convert 'body_type' to a factor first (if it's not already)
+new_data$body_type <- as.factor(new_data$body_type)
+
+# One-hot encoding using model.matrix
+encoded_data <- model.matrix(~ body_type - 1, data = new_data)
+
+# Add the encoded data back to the original dataframe (optional)
+new_data_encoded <- cbind(new_data, encoded_data)
+
+# View the first few rows of the new dataframe
+unique(new_data_encoded$fleet)
+new_data_encoded$fleet <- ifelse(new_data_encoded$fleet == "True", 1, ifelse(new_data_encoded$fleet == "False", 0, as.numeric(new_data_encoded$fleet)))
+
+unique(new_data_encoded$frame_damaged)
+new_data_encoded$frame_damaged <- ifelse(new_data_encoded$frame_damaged == "True", 1, ifelse(new_data_encoded$frame_damaged == "False", 0, as.numeric(new_data_encoded$frame_damaged)))
+
+unique(new_data_encoded$franchise_dealer)
+new_data_encoded$franchise_dealer <- ifelse(new_data_encoded$franchise_dealer == "True", 1, ifelse(new_data_encoded$franchise_dealer == "False", 0, as.numeric(new_data_encoded$franchise_dealer)))
+
+unique(new_data_encoded$has_accidents)
+new_data_encoded$has_accidents <- ifelse(new_data_encoded$has_accidents == "True", 1, ifelse(new_data_encoded$has_accidents == "False", 0, as.numeric(new_data_encoded$has_accidents)))
+
+unique(new_data_encoded$isCab)
+new_data_encoded$isCab <- ifelse(new_data_encoded$isCab == "True", 1, ifelse(new_data_encoded$isCab == "False", 0, as.numeric(new_data_encoded$isCab)))
+
+unique(new_data_encoded$is_new)
+new_data_encoded$is_new <- ifelse(new_data_encoded$is_new == "True", 1, ifelse(new_data_encoded$is_new == "False", 0, as.numeric(new_data_encoded$is_new)))
+
+unique(new_data_encoded$salvage)
+new_data_encoded$salvage <- ifelse(new_data_encoded$salvage == "True", 1, ifelse(new_data_encoded$salvage == "False", 0, as.numeric(new_data_encoded$salvage)))
+
+##########################处理scoringData
+scoringData1 <- scoringData |> select("id","body_type",
+                                      "fuel_tank_volume_gallons","highway_fuel_economy",
+                                      "city_fuel_economy","wheelbase_inches",
+                                      "back_legroom_inches","front_legroom_inches","length_inches",
+                                      "width_inches","height_inches","horsepower" ,
+                                      "daysonmarket","maximum_seating","year","fleet","frame_damaged","franchise_dealer",
+                                      "has_accidents","isCab","is_new","mileage","owner_count","salvage","seller_rating")
+unique(scoringData1$body_type)
+# Assuming your dataframe is named scoringData1
+# Convert 'body_type' to a factor first (if it's not already)
+scoringData1$body_type <- as.factor(scoringData1$body_type)
+
+# One-hot encoding using model.matrix
+encode_score <- model.matrix(~ body_type - 1, data = scoringData1)
+
+# Add the encoded data back to the original dataframe (optional)
+scoringData1 <- cbind(scoringData1, encode_score)
+
+
+
+unique(scoringData1$fleet)
+scoringData1$fleet <- ifelse(scoringData1$fleet == "True", 1, ifelse(scoringData1$fleet == "False", 0, as.numeric(scoringData1$fleet)))
+
+unique(scoringData1$frame_damaged)
+scoringData1$frame_damaged <- ifelse(scoringData1$frame_damaged == "True", 1, ifelse(scoringData1$frame_damaged == "False", 0, as.numeric(scoringData1$frame_damaged)))
+
+unique(scoringData1$franchise_dealer)
+scoringData1$franchise_dealer <- ifelse(scoringData1$franchise_dealer == "True", 1, ifelse(scoringData1$franchise_dealer == "False", 0, as.numeric(scoringData1$franchise_dealer)))
+
+unique(scoringData1$has_accidents)
+scoringData1$has_accidents <- ifelse(scoringData1$has_accidents == "True", 1, ifelse(scoringData1$has_accidents == "False", 0, as.numeric(scoringData1$has_accidents)))
+
+unique(scoringData1$isCab)
+scoringData1$isCab <- ifelse(scoringData1$isCab == "True", 1, ifelse(scoringData1$isCab == "False", 0, as.numeric(scoringData1$isCab)))
+
+unique(scoringData1$is_new)
+scoringData1$is_new <- ifelse(scoringData1$is_new == "True", 1, ifelse(scoringData1$is_new == "False", 0, as.numeric(scoringData1$is_new)))
+
+unique(scoringData1$salvage)
+scoringData1$salvage <- ifelse(scoringData1$salvage == "True", 1, ifelse(scoringData1$salvage == "False", 0, as.numeric(scoringData1$salvage)))
+
+new_data_encoded$body_type <- NULL
+scoringData1$body_type <- NULL
+
+
+labels <- new_data_encoded$price
+
+# Convert factors to numeric encoding if not already done
+features <- new_data_encoded[, -which(names(new_data_encoded) %in% c("id", "price"))]
+
+features[] <- lapply(features, function(x) if(is.factor(x)) as.numeric(as.factor(x)) else x)
+
+# Convert data to xgb.DMatrix object
+dtrain <- xgb.DMatrix(data = as.matrix(features), label = labels)
+
+# 设置种子，以确保结果可以复现
+set.seed(123)
+
+# 定义参数网格
+grid <- expand.grid(
+  nrounds = seq(100, 500, by = 50),  
+  max_depth = c(6, 8, 10),
+  eta = c(0.01, 0.05, 0.1),
+  gamma = c(0, 0.1, 0.2),
+  colsample_bytree = c(0.5, 0.7, 0.9),
+  min_child_weight = c(1, 3, 5),
+  subsample = c(0.5, 0.7, 0.9)
+)
+
+# 定义交叉验证控制
+train_control <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = TRUE,
+  returnData = FALSE,
+  returnResamp = "none",
+  search = "grid",
+  allowParallel = TRUE
+)
+
+# 使用caret进行训练和网格搜索
+xgb_train <- train(
+  x = as.matrix(features),
+  y = labels,
+  trControl = train_control,
+  tuneGrid = grid,
+  method = "xgbTree"
+)
+
+# 检查最佳模型的参数
+print(xgb_train$bestTune)
+
+# 使用最佳参数和最佳迭代次数重新训练模型
+best_params <- xgb_train$bestTune
+
+final_model <- xgb.train(
+  data = xgb_data,
+  params = best_params,
+  nrounds = xgb_train$bestIteration
+)
+# 预处理评分数据集
+dtest <- xgb.DMatrix(data = as.matrix(scoringData1))
+
+# 使用最终模型进行预测
+predictions <- predict(final_model, dtest)
+
+# 创建提交文件
+submissionFile <- data.frame(id = scoringData1$id, price = predictions)
+write.csv(submissionFile, 'sample_submission12.csv', row.names = FALSE)
